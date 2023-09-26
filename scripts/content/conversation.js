@@ -1,6 +1,6 @@
 /* eslint-disable no-restricted-globals */
 // eslint-disable-next-line no-unused-vars
-/* global getConversation, submitChat, openSubmitPromptModal, initializeRegenerateResponseButton, showHideTextAreaElement, rowAssistant, rowUser, copyRichText, messageFeedback, openFeedbackModal, refreshConversations, initializeStopGeneratingResponseButton, chatStreamIsClosed:true, generateInstructions, isGenerating:true, scrolUpDetected:true, addScrollDetector, addArkoseScript, addEnforcementTriggerElement, languageList, writingStyleList, toneList */
+/* global getConversation, submitChat, openSubmitPromptModal, initializeRegenerateResponseButton, showHideTextAreaElement, rowAssistant, rowUser, copyRichText, messageFeedback, openFeedbackModal, refreshConversations, initializeStopGeneratingResponseButton, chatStreamIsClosed:true, generateInstructions, isGenerating:true, scrolUpDetected:true, addScrollDetector, languageList, writingStyleList, toneList, showAutoSyncWarning, arkoseTrigger */
 
 function addPinNav(sortedNodes) {
   chrome.storage.local.get(['settings'], (res) => {
@@ -44,8 +44,8 @@ function updateModel(modelSlug, fullConversation) {
   }) => {
     const allModels = [...models, ...unofficialModels, ...customModels];
     const selectedModel = allModels.find((m) => m.slug === modelSlug);
-    if (selectedModel.slug.includes('gpt-4')) {
-      addArkoseScript();
+    if (selectedModel.slug === 'gpt-4-code-interpreter' && settings.autoSync) {
+      showAutoSyncWarning('Uploading files with <b style="color:white;">Advanced Data Analysis</b> model requires <b style="color:white;">Auto Sync to be OFF</b>. Please turn off Auto Sync if you need to upload a file. You can turn Auto Sync back ON (<b style="color:white;">CMD/CTRL+ALT+A</b>) again after submitting your file.');
     }
     const pluginsDropdownWrapper = document.querySelector('#plugins-dropdown-wrapper-navbar');
     if (pluginsDropdownWrapper) {
@@ -144,18 +144,18 @@ function loadConversation(conversationId, searchValue = '', focusOnInput = true)
   const suggestionsWrapper = document.querySelector('#suggestions-wrapper');
   if (suggestionsWrapper) suggestionsWrapper.remove();
   scrolUpDetected = false;
-  chrome.storage.sync.get(['name', 'avatar', 'conversationsOrder'], (result) => {
-    chrome.storage.local.get(['conversations', 'settings', 'models'], (res) => {
-      const { conversationsOrder } = result;
-      const { settings } = res;
-      const folderConatainingConversation = conversationsOrder.find((folder) => folder?.conversationIds?.includes(conversationId?.slice(0, 5)));
+  chrome.storage.sync.get(['name', 'avatar'], (result) => {
+    chrome.storage.local.get(['conversationsOrder', 'conversations', 'settings', 'models'], (res) => {
+      const { settings, conversationsOrder } = res;
+      const folderConatainingConversation = conversationsOrder.find((folder) => folder?.conversationIds?.includes(conversationId));
       let folderName = '';
       if (folderConatainingConversation) {
         folderName = folderConatainingConversation.name;
       }
       const fullConversation = res.conversations?.[conversationId];
+
       // set page title meta to fullConversation.title
-      document.title = fullConversation.title;
+      document.title = fullConversation.title || 'New chat';
 
       if (!fullConversation || !fullConversation?.current_node) return;
       const main = document.querySelector('main');
@@ -175,7 +175,7 @@ function loadConversation(conversationId, searchValue = '', focusOnInput = true)
       let currentNodeId = fullConversation.current_node;
       // mapping: {id: message, id: message }
       // remove all the nodes that are not user or assistant
-      // (node) => ['user', 'assistant'].includes(node.author.role) && node.recipient === 'all');
+      // (node) => ['user', 'assistant'].includes(node.author?.role) && node.recipient === 'all');
 
       while (currentNodeId) {
         const currentNode = fullConversation.mapping[currentNodeId];
@@ -242,8 +242,7 @@ function loadConversation(conversationId, searchValue = '', focusOnInput = true)
       main.firstChild.prepend(outerDiv);
       if (!searchValue) {
         if (focusOnInput) {
-          const inputForm = main.querySelector('form');
-          const textAreaElement = inputForm.querySelector('textarea');
+          const textAreaElement = main.querySelector('form textarea');
           if (textAreaElement) textAreaElement.focus();
         }
         innerDiv.scrollTop = innerDiv.scrollHeight;
@@ -350,14 +349,8 @@ function addConversationsEventListeners(conversationId) {
         saveButton.classList = 'btn flex justify-center gap-2 btn-primary mr-2';
         saveButton.innerText = 'Save & Submit';
         saveButton.addEventListener('click', () => {
-          window.localStorage.removeItem('arkoseToken');
-          if (result.settings.selectedModel.slug.includes('gpt-4')) {
-            const inputForm = document.querySelector('main form');
-            if (!inputForm) return;
-            if (!inputForm.querySelector('#enforcement-trigger')) {
-              addEnforcementTriggerElement();
-            }
-            inputForm.querySelector('#enforcement-trigger').click();
+          if (result.settings.selectedModel.tags.includes('gpt4')) {
+            arkoseTrigger();
           }
           let newMessage = textArea.value;
           // this is the right way, but OpenAI always creat a new chat even if you don't change the input, so we follow the same behavior
@@ -484,7 +477,11 @@ function addConversationsEventListeners(conversationId) {
     const element = document.querySelector(`#message-text-${messageId}`);
     const copyMenu = document.querySelector(`#copy-result-menu-${messageId}`);
     const htmlButton = document.querySelector(`#result-html-copy-button-${messageId}`);
+    const newHtmlButton = htmlButton.cloneNode(true);
+    htmlButton.parentNode.replaceChild(newHtmlButton, htmlButton);
     const markdownButton = document.querySelector(`#result-markdown-copy-button-${messageId}`);
+    const newMarkdownButton = markdownButton.cloneNode(true);
+    markdownButton.parentNode.replaceChild(newMarkdownButton, markdownButton);
 
     button.addEventListener('mouseover', () => {
       copyMenu.style.display = 'block';
@@ -503,10 +500,10 @@ function addConversationsEventListeners(conversationId) {
         const conversation = result.conversations[conversationId];
         // while parent is not user, keep going up
         let parentId = conversation.mapping[messageId].parent;
-        let parentRole = conversation.mapping[parentId].message.author.role || conversation.mapping[parentId].message.role;
+        let parentRole = conversation.mapping[parentId].message.author?.role || conversation.mapping[parentId].message.role;
         while (parentRole !== 'user') {
           parentId = conversation.mapping[parentId].parent;
-          parentRole = conversation.mapping[parentId].message.author.role || conversation.mapping[parentId].message.role;
+          parentRole = conversation.mapping[parentId].message.author?.role || conversation.mapping[parentId].message.role;
         }
         const parentMessage = conversation.mapping[parentId].message.content.parts.join('\n');
         const codeHeaders = document.querySelectorAll('#code-header');
@@ -515,7 +512,7 @@ function addConversationsEventListeners(conversationId) {
           header.style.display = 'none';
         });
         const text = `${result.settings.copyMode ? `>> USER: ${parentMessage}\n>> ASSISTANT: ` : ''}${element.innerText}`;
-        navigator.clipboard.writeText(text);
+        navigator.clipboard.writeText(text.trim());
         codeHeaders.forEach((header) => {
           header.style.display = 'flex';
         });
@@ -529,14 +526,14 @@ function addConversationsEventListeners(conversationId) {
         );
       });
     });
-    htmlButton.addEventListener('click', () => {
+    newHtmlButton.addEventListener('click', () => {
       chrome.storage.local.get(['conversations', 'settings'], (result) => {
         const conversation = result.conversations[conversationId];
         let parentId = conversation.mapping[messageId].parent;
-        let parentRole = conversation.mapping[parentId].message.author.role || conversation.mapping[parentId].message.role;
+        let parentRole = conversation.mapping[parentId].message.author?.role || conversation.mapping[parentId].message.role;
         while (parentRole !== 'user') {
           parentId = conversation.mapping[parentId].parent;
-          parentRole = conversation.mapping[parentId].message.author.role || conversation.mapping[parentId].message.role;
+          parentRole = conversation.mapping[parentId].message.author?.role || conversation.mapping[parentId].message.role;
         }
         const parentMessage = conversation.mapping[parentId].message.content.parts.join('\n');
         const newElement = element.cloneNode(true);
@@ -545,34 +542,34 @@ function addConversationsEventListeners(conversationId) {
         }
         copyRichText(newElement);
         // animate copy htmlButton text to copied and back in 3 seconds
-        htmlButton.textContent = 'Copied!';
+        newHtmlButton.textContent = 'Copied!';
         setTimeout(
           () => {
-            htmlButton.textContent = 'HTML';
+            newHtmlButton.textContent = 'HTML';
           },
           1500,
         );
       });
     });
-    markdownButton.addEventListener('click', () => {
+    newMarkdownButton.addEventListener('click', () => {
       chrome.storage.local.get(['settings'], (result) => {
         getConversation(conversationId).then((conversation) => {
           const { message } = conversation.mapping[messageId];
           let parentId = conversation.mapping[messageId].parent;
-          let parentRole = conversation.mapping[parentId].message.author.role || conversation.mapping[parentId].message.role;
+          let parentRole = conversation.mapping[parentId].message.author?.role || conversation.mapping[parentId].message.role;
           while (parentRole !== 'user') {
             parentId = conversation.mapping[parentId].parent;
-            parentRole = conversation.mapping[parentId].message.author.role || conversation.mapping[parentId].message.role;
+            parentRole = conversation.mapping[parentId].message.author?.role || conversation.mapping[parentId].message.role;
           }
           const parentMessage = conversation.mapping[parentId].message.content.parts.join('\n');
           const text = `${result.settings.copyMode ? `##USER:\n${parentMessage}\n\n##ASSISTANT:\n` : ''}${message.content.parts.join('\n')}`;
-          navigator.clipboard.writeText(text);
+          navigator.clipboard.writeText(text.trim());
 
           // animate copy markdownButton text to copied and back in 3 seconds
-          markdownButton.textContent = 'Copied!';
+          newMarkdownButton.textContent = 'Copied!';
           setTimeout(
             () => {
-              markdownButton.textContent = 'Markdown';
+              newMarkdownButton.textContent = 'Markdown';
             },
             1500,
           );

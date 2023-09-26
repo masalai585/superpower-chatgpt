@@ -52,7 +52,8 @@ function promptDropdown() {
         textAreaElement.dispatchEvent(new Event('input', { bubbles: true }));
         textAreaElement.dispatchEvent(new Event('change', { bubbles: true }));
         if (e.shiftKey) return;
-        const curSubmitButton = document.querySelector('main').querySelector('form').querySelector('textarea ~ button');
+        const curSubmitButton = document.querySelector('main form textarea ~ button');
+
         setTimeout(() => {
           curSubmitButton.click();
         }, 300);
@@ -80,7 +81,7 @@ function addContinueButton() {
   if (!canSubmit) {
     if (syncDiv) syncDiv.style.opacity = '0.3';
   }
-  if ((!canSubmit) && lastContinueButton) {
+  if (!canSubmit && lastContinueButton) {
     lastContinueButton.remove();
     return;
   }
@@ -151,6 +152,7 @@ function addContinueButton() {
   autoClickButton.type = 'button';
   autoClickButton.style = 'width:38px;border-top-left-radius:0;border-bottom-left-radius:0;border-left:0;z-index:1;padding:0;';
   chrome.storage.local.get('settings', ({ settings }) => {
+    if (!settings) return;
     autoClickButton.title = `Auto Continue is ${settings.autoClick ? 'ON' : 'OFF'}`;
     if (settings.autoClick) {
       autoClickButton.classList.add('btn', 'flex', 'justify-center', 'gap-2', 'btn-primary', 'border');
@@ -173,6 +175,7 @@ function addContinueButton() {
   });
 
   chrome.storage.local.get('settings', ({ settings }) => {
+    if (!settings) return;
     setTimeout(() => {
       continueButtonWrapper.style.display = settings.showCustomPromptsButton ? 'flex' : 'none';
       continueButtonWrapper.appendChild(shiftClickText);
@@ -184,6 +187,7 @@ function addContinueButton() {
       }
       if (canSubmit) {
         const inputForm = document.querySelector('main form');
+        if (!inputForm) return;
         const inputFormFirstChild = inputForm.firstChild;
 
         const textAreaElement = inputForm.querySelector('textarea');
@@ -244,5 +248,5 @@ function initializeContinue() {
       addContinueButton();
     }, 500);
   });
-  observer.observe(main.parentElement.parentElement, { childList: true, subtree: true });
+  observer.observe(main, { childList: true, subtree: true });
 }

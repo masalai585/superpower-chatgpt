@@ -1,4 +1,4 @@
-/* global submitPrompt, createSwitch, fetchPrompts, promptLibraryPageNumber, toast, categoryList, languageList, addDropdownEventListener, dropdown */
+/* global fetchPrompts, promptLibraryPageNumber, toast, categoryList, languageList, addDropdownEventListener, dropdown */
 //
 let selectedCategories = [];
 function createCategorySelector(categories = []) {
@@ -94,7 +94,7 @@ function openSubmitPromptModal(text = '', modelSlug = '', promptId = null, title
     }
   });
   const submitPromptModalContent = document.createElement('div');
-  submitPromptModalContent.style = 'width:700px;background-color:#0b0d0e;border-radius:4px;padding:16px;display:flex;flex-direction:column;align-items:start;justify-content:start;border:solid 2px lightslategray;';
+  submitPromptModalContent.style = 'width:800px;max-width:90%;background-color:#0b0d0e;border-radius:4px;padding:16px;display:flex;flex-direction:column;align-items:start;justify-content:start;border:solid 2px lightslategray;';
   submitPromptModalContent.id = 'submit-prompt-modal-content';
   const modalTitle = document.createElement('div');
   modalTitle.style = 'color:white;font-size:1.25rem;margin-bottom: 8px;';
@@ -236,7 +236,12 @@ function openSubmitPromptModal(text = '', modelSlug = '', promptId = null, title
           return;
         }
         const curHideFullPromptSwitch = document.getElementById('switch-hide-full-prompt');
-        submitPrompt(result.openai_id, textToSubmit.value, promptTitleInput.value, selectedCategories, res.settings.selectedPromptLanguage.code, modelSlug, nicknameInput.value, urlInput.value, curHideFullPromptSwitch?.checked || false, promptId).then((data) => {
+        chrome.runtime.sendMessage({
+          submitPrompt: true,
+          detail: {
+            openAiId: result.openai_id, prompt: textToSubmit.value, promptTitle: promptTitleInput.value, categories: selectedCategories, promptLangage: res.settings.selectedPromptLanguage.code, modelSlug, nickname: nicknameInput.value, url: urlInput.value, hideFullPrompt: curHideFullPromptSwitch?.checked || false, promptId,
+          },
+        }, (data) => {
           // show toast that prompt is submitted
           if (Object.keys(data).join(',').includes('error')) {
             if (Object.values(data).join(',').includes('unique_title')) {
@@ -305,13 +310,9 @@ function initializeAddToPromptLibrary() {
   addSubmitButtonToAllUserInputs();
   const main = document.querySelector('main');
   if (!main) return;
-  const contentWrapper = main.querySelector('.flex-1.overflow-hidden');
-  const scrollableArea = contentWrapper.firstChild;
-  // make scrollableArea scroll behavior smooth
-  scrollableArea.style.scrollBehavior = 'smooth';
   selectedCategories = [];
   const observer = new MutationObserver(() => {
     addSubmitButtonToAllUserInputs();
   });
-  observer.observe(main.parentElement.parentElement, { childList: true, subtree: true });
+  observer.observe(main, { childList: true, subtree: true });
 }

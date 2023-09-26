@@ -1,6 +1,6 @@
 /* eslint-disable no-restricted-globals */
 // eslint-disable-next-line no-unused-vars
-/* global markdown, markdownitSup, initializeNavbar, generateInstructions, generateChat, SSE, formatDate, loadConversation, resetSelection, katex, texmath, rowUser, rowAssistant, updateOrCreateConversation, replaceTextAreaElemet, highlight, isGenerating:true, disableTextInput:true, generateTitle, debounce, initializeRegenerateResponseButton, initializeStopGeneratingResponseButton, showHideTextAreaElement, showNewChatPage, chatStreamIsClosed:true, addCopyCodeButtonsEventListeners, addScrollDetector, scrolUpDetected:true, Sortable, updateInputCounter, addUserPromptToHistory, getGPT4CounterMessageCapWindow, createFolder, getConversationElementClassList, notSelectedClassList, selectedClassList, conversationActions, addCheckboxToConversationElement, createConversation, deleteConversation, handleQueryParams, addScrollButtons, updateTotalCounter, isWindows, loadSharedConversation, createTemplateWordsModal, addEnforcementTriggerElement, initializePromptChain, insertNextChain, runningPromptChainSteps:true, runningPromptChainIndex:true, lastPromptSuggestions, generateSuggestions */
+/* global markdown, markdownitSup, initializeNavbar, generateInstructions, generateChat, SSE, formatDate, loadConversation, resetSelection, katex, texmath, rowUser, rowAssistant, updateOrCreateConversation, replaceTextAreaElemet, highlight, isGenerating:true, disableTextInput:true, generateTitle, debounce, initializeRegenerateResponseButton, initializeStopGeneratingResponseButton, showHideTextAreaElement, showNewChatPage, chatStreamIsClosed:true, addCopyCodeButtonsEventListeners, addScrollDetector, scrolUpDetected:true, Sortable, updateInputCounter, addUserPromptToHistory, getGPT4CounterMessageCapWindow, createFolder, getConversationElementClassList, notSelectedClassList, selectedClassList, conversationActions, addCheckboxToConversationElement, createConversation, deleteConversation, handleQueryParams, addScrollButtons, updateTotalCounter, isWindows, loadSharedConversation, createTemplateWordsModal, arkoseTrigger, initializePromptChain, insertNextChain, runningPromptChainSteps:true, runningPromptChainIndex:true, lastPromptSuggestions, generateSuggestions, playSound */
 
 // Initial state
 let userChatIsActuallySaved = false;
@@ -35,6 +35,8 @@ function removeOriginalConversationList() {
           return from.el.id !== 'folder-content-trash';
         },
       },
+      direction: 'vertical',
+      invertSwap: true,
       draggable: '[id^="conversation-button-"], [id^="wrapper-folder-"]:not([id="wrapper-folder-trash"]',
       onEnd: (event) => {
         const {
@@ -44,23 +46,24 @@ function removeOriginalConversationList() {
         const isToFolder = to.id.startsWith('folder-content-');
 
         const fromId = 'conversation-list';
-        const toId = isToFolder ? to.id.split('folder-content-')[1]?.slice(0, 5) : 'conversation-list';
+        const toId = isToFolder ? to.id.split('folder-content-')[1] : 'conversation-list';
         if (oldDraggableIndex === newDraggableIndex && toId === fromId) return;
 
         if (!isFolder && isToFolder && toId === 'trash') {
           deleteConversationOnDragToTrash(item.id.split('conversation-button-')[1]);
         }
-        chrome.storage.sync.get(['conversationsOrder'], (result) => {
+        chrome.storage.local.get(['conversationsOrder'], (result) => {
           const { conversationsOrder } = result;
           const movingItem = conversationsOrder.splice(oldDraggableIndex, 1)[0];
-
           if (isToFolder) {
             const emptyFolder = document.querySelector(`#empty-folder-${toId}`);
             if (emptyFolder) emptyFolder.remove();
             const toFolderIndex = conversationsOrder.findIndex((c) => c.id === toId);
             const toFolder = conversationsOrder[toFolderIndex];
-            toFolder.conversationIds.splice(newDraggableIndex, 0, movingItem);
-            conversationsOrder.splice(toFolderIndex, 1, toFolder);
+            if (!isFolder && typeof movingItem === 'string') {
+              toFolder.conversationIds.splice(newDraggableIndex, 0, movingItem);
+              conversationsOrder.splice(toFolderIndex, 1, toFolder);
+            }
           } else {
             // eslint-disable-next-line no-lonely-if
             if (isFolder) {
@@ -69,8 +72,20 @@ function removeOriginalConversationList() {
               conversationsOrder.splice(newDraggableIndex, 0, movingItem);
             }
           }
-          chrome.storage.sync.set({ conversationsOrder });
+          chrome.storage.local.set({ conversationsOrder });
         });
+      },
+      onMove: (event) => {
+        const { dragged, related } = event;
+        const isFolder = dragged.id.startsWith('wrapper-folder-');
+        const isToFolder = related.id.startsWith('wrapper-folder');
+        const curFolderContent = document.querySelector(`#folder-content-${related.id.split('wrapper-folder-')[1]}`);
+        const folderIsClosed = curFolderContent?.style.display === 'none';
+        const shiftKeyIsDown = event.originalEvent.shiftKey;
+        if (!isFolder && isToFolder && folderIsClosed && shiftKeyIsDown) {
+          related.click();
+        }
+        return true;
       },
     });
   }
@@ -94,131 +109,119 @@ function deleteConversationOnDragToTrash(conversationId) {
   conversationElementIcon.src = chrome.runtime.getURL('icons/trash.png');
 }
 function createSearchBox() {
-  chrome.storage.local.get(['conversations', 'settings'], (res) => {
-    const existingSearchBoxWrapper = document.querySelector('#conversation-search-wrapper');
-    if (existingSearchBoxWrapper) existingSearchBoxWrapper.remove();
-    const visibleConvs = Object.values(res.conversations).filter((c) => !c.skipped);
-    if (visibleConvs.length === 0) {
+  const existingSearchBoxWrapper = document.querySelector('#conversation-search-wrapper');
+  if (existingSearchBoxWrapper) existingSearchBoxWrapper.remove();
+  const conversationList = document.querySelector('#conversation-list');
+  const searchBoxWrapper = document.createElement('div');
+  searchBoxWrapper.id = 'conversation-search-wrapper';
+  searchBoxWrapper.classList = 'flex items-center justify-center';
+  const searchbox = document.createElement('input');
+  searchbox.type = 'search';
+  searchbox.id = 'conversation-search';
+  searchbox.tabIndex = 0;
+  searchbox.placeholder = 'Search conversations';
+  searchbox.classList = 'w-full px-4 py-2 mr-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm bg-gray-800 conversation-search';
+  searchbox.addEventListener('keydown', (event) => {
+    if (event.key === 'ArrowDown') {
+      const focusedConversation = document.querySelector('.selected');
+      if (focusedConversation) {
+        const nextConversation = focusedConversation.nextElementSibling;
+        if (nextConversation) {
+          nextConversation.click();
+          nextConversation.scrollIntoView({ block: 'center' });
+        }
+      }
+    }
+    if (event.key === 'ArrowUp') {
+      const focusedConversation = document.querySelector('.selected');
+      if (focusedConversation) {
+        const previousConversation = focusedConversation.previousElementSibling;
+        if (previousConversation) {
+          previousConversation.click();
+          previousConversation.scrollIntoView({ block: 'center' });
+        }
+      }
+    }
+  });
+  searchbox.addEventListener('input', debounce((event) => {
+    const searchValue = event.target.value.toLowerCase();
+    chrome.storage.local.get(['conversationsOrder', 'conversations'], (result) => {
+      const { conversations, conversationsOrder } = result;
+      // remove existing conversations
+      const curConversationList = document.querySelector('#conversation-list');
+      // remove conversations list childs other than the search box wrapper (first child)
+      while (curConversationList.childNodes.length > 1) {
+        curConversationList.removeChild(curConversationList.lastChild);
+      }
+
+      const allConversations = Object.values(conversations).filter((c) => !c.skipped);
+      let filteredConversations = allConversations.sort((a, b) => b.update_time - a.update_time);
+
+      resetSelection();
+      if (searchValue) {
+        filteredConversations = allConversations.filter((c) => (
+          c.title?.toLowerCase()?.includes(searchValue.toLowerCase())
+          || Object.values(c.mapping).map((m) => m?.message?.content?.parts?.join(' ')?.replace(/## Instructions[\s\S]*## End Instructions\n\n/, ''))
+            .join(' ')?.toLowerCase()
+            .includes(searchValue.toLowerCase())));
+        const filteredConversationIds = filteredConversations.map((c) => c.id);
+        // convert filtered conversations to object with id as key
+        const filteredConversationsObj = filteredConversations.reduce((acc, cur) => {
+          acc[cur.id] = cur;
+          return acc;
+        }, {});
+        loadStorageConversations(filteredConversationsObj, filteredConversationIds, searchValue);
+      } else {
+        loadStorageConversations(conversations, conversationsOrder, searchValue);
+        const { pathname } = new URL(window.location.toString());
+        const conversationId = pathname.split('/').pop().replace(/[^a-z0-9-]/gi, '');
+        if (/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(conversationId)) {
+          loadConversation(conversationId, '', false);
+        }
+      }
+    });
+  }), 500);
+
+  const newFolderButton = document.createElement('button');
+  newFolderButton.id = 'new-folder-button';
+  newFolderButton.classList = 'w-12 h-full flex items-center justify-center rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm bg-gray-800 border border-gray-800';
+  const newFoolderIcon = document.createElement('img');
+  newFoolderIcon.classList = 'w-5 h-5';
+  newFoolderIcon.src = chrome.runtime.getURL('icons/new-folder.png');
+  newFolderButton.append(newFoolderIcon);
+  newFolderButton.addEventListener('mouseover', () => {
+    newFolderButton.classList.remove('border-gray-800');
+    newFolderButton.classList.add('bg-gray-600', 'border-gray-300');
+  });
+  newFolderButton.addEventListener('mouseout', () => {
+    newFolderButton.classList.add('border-gray-800');
+
+    newFolderButton.classList.remove('bg-gray-600', 'border-gray-300');
+  });
+  newFolderButton.addEventListener('click', (e) => {
+    // inser a new folder at the top of the list
+    // if cmnd + shift
+    if (e.shiftKey && (e.metaKey || (isWindows() && e.ctrlKey))) {
+      chrome.storage.local.remove('conversationsOrder');
+      window.location.reload();
       return;
     }
-    const conversationList = document.querySelector('#conversation-list');
-    const searchboxWrapper = document.createElement('div');
-    searchboxWrapper.id = 'conversation-search-wrapper';
-    searchboxWrapper.classList = 'flex items-center justify-center';
-    const searchbox = document.createElement('input');
-    searchbox.type = 'search';
-    searchbox.id = 'conversation-search';
-    searchbox.tabIndex = 0;
-    searchbox.placeholder = 'Search conversations';
-    searchbox.classList = 'w-full px-4 py-2 mr-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm bg-gray-800 conversation-search';
-    searchbox.addEventListener('keydown', (event) => {
-      if (event.key === 'ArrowDown') {
-        const focusedConversation = document.querySelector('.selected');
-        if (focusedConversation) {
-          const nextConversation = focusedConversation.nextElementSibling;
-          if (nextConversation) {
-            nextConversation.click();
-            nextConversation.scrollIntoView({ block: 'center' });
-          }
-        }
-      }
-      if (event.key === 'ArrowUp') {
-        const focusedConversation = document.querySelector('.selected');
-        if (focusedConversation) {
-          const previousConversation = focusedConversation.previousElementSibling;
-          if (previousConversation) {
-            previousConversation.click();
-            previousConversation.scrollIntoView({ block: 'center' });
-          }
-        }
-      }
+    chrome.storage.local.get(['settings', 'conversationsOrder'], (result) => {
+      const newFolder = {
+        id: self.crypto.randomUUID(), name: 'New Folder', conversationIds: [], isOpen: true,
+      };
+      const { settings, conversationsOrder } = result;
+      chrome.storage.local.set({ conversationsOrder: [newFolder, ...conversationsOrder] });
+      const newFolderElement = createFolder(newFolder, settings.conversationTimestamp, [], true);
+      const curConversationList = document.querySelector('#conversation-list');
+      curConversationList.insertBefore(newFolderElement, searchBoxWrapper.nextSibling);
+      curConversationList.scrollTop = 0;
     });
-    searchbox.addEventListener('input', debounce((event) => {
-      const searchValue = event.target.value.toLowerCase();
-      chrome.storage.sync.get(['conversationsOrder'], (syncResult) => {
-        chrome.storage.local.get(['conversations'], (result) => {
-          const { conversationsOrder } = syncResult;
-          const { conversations } = result;
-          // remove existing conversations
-          const curConversationList = document.querySelector('#conversation-list');
-          // remove conversations list childs other than the search box wrapper (first child)
-          while (curConversationList.childNodes.length > 1) {
-            curConversationList.removeChild(curConversationList.lastChild);
-          }
-
-          const allConversations = Object.values(conversations).filter((c) => !c.skipped);
-          let filteredConversations = allConversations.sort((a, b) => b.update_time - a.update_time);
-
-          resetSelection();
-          if (searchValue) {
-            filteredConversations = allConversations.filter((c) => (
-              c.title?.toLowerCase()?.includes(searchValue.toLowerCase())
-              || Object.values(c.mapping).map((m) => m?.message?.content?.parts?.join(' ')?.replace(/## Instructions[\s\S]*## End Instructions\n\n/, ''))
-                .join(' ')?.toLowerCase()
-                .includes(searchValue.toLowerCase())));
-            const filteredConversationIds = filteredConversations.map((c) => c.id.slice(0, 5));
-            // convert filtered conversations to object with id as key
-            const filteredConversationsObj = filteredConversations.reduce((acc, cur) => {
-              acc[cur.id] = cur;
-              return acc;
-            }, {});
-            loadStorageConversations(filteredConversationsObj, filteredConversationIds, searchValue);
-          } else {
-            loadStorageConversations(conversations, conversationsOrder, searchValue);
-            const { pathname } = new URL(window.location.toString());
-            const conversationId = pathname.split('/').pop().replace(/[^a-z0-9-]/gi, '');
-            if (/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(conversationId)) {
-              loadConversation(conversationId, '', false);
-            }
-          }
-        });
-      });
-    }), 500);
-
-    const newFolderButton = document.createElement('button');
-    newFolderButton.id = 'new-folder-button';
-    newFolderButton.classList = 'w-12 h-full flex items-center justify-center rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm bg-gray-800 border border-gray-800';
-    const newFoolderIcon = document.createElement('img');
-    newFoolderIcon.classList = 'w-5 h-5';
-    newFoolderIcon.src = chrome.runtime.getURL('icons/new-folder.png');
-    newFolderButton.append(newFoolderIcon);
-    newFolderButton.addEventListener('mouseover', () => {
-      newFolderButton.classList.remove('border-gray-800');
-      newFolderButton.classList.add('bg-gray-600', 'border-gray-300');
-    });
-    newFolderButton.addEventListener('mouseout', () => {
-      newFolderButton.classList.add('border-gray-800');
-
-      newFolderButton.classList.remove('bg-gray-600', 'border-gray-300');
-    });
-    newFolderButton.addEventListener('click', (e) => {
-      // inser a new folder at the top of the list
-      // if cmnd + shift
-      if (e.shiftKey && (e.metaKey || (isWindows() && e.ctrlKey))) {
-        chrome.storage.sync.remove('conversationsOrder');
-        window.location.reload();
-        return;
-      }
-      chrome.storage.sync.get(['conversationsOrder'], (syncResult) => {
-        chrome.storage.local.get(['settings'], (result) => {
-          const newFolder = {
-            id: self.crypto.randomUUID().slice(0, 5), name: 'New Folder', conversationIds: [], isOpen: true,
-          };
-          const { conversationsOrder } = syncResult;
-          const { settings } = result;
-          chrome.storage.sync.set({ conversationsOrder: [newFolder, ...conversationsOrder] });
-          const newFolderElement = createFolder(newFolder, settings.conversationTimestamp, [], true);
-          const curConversationList = document.querySelector('#conversation-list');
-          curConversationList.insertBefore(newFolderElement, searchboxWrapper.nextSibling);
-          curConversationList.scrollTop = 0;
-        });
-      });
-    });
-    searchboxWrapper.append(newFolderButton);
-    // add conversation search box to the top of the list
-    searchboxWrapper.prepend(searchbox);
-    conversationList.prepend(searchboxWrapper);
   });
+  searchBoxWrapper.append(newFolderButton);
+  // add conversation search box to the top of the list
+  searchBoxWrapper.prepend(searchbox);
+  conversationList.prepend(searchBoxWrapper);
 }
 // add new conversation to the top of the list
 // eslint-disable-next-line no-unused-vars
@@ -226,7 +229,7 @@ function prependConversation(conversation) {
   const existingConversationElement = document.querySelector(`#conversation-button-${conversation.id}`);
   if (existingConversationElement) existingConversationElement.remove();
   const conversationList = document.querySelector('#conversation-list');
-  const searchboxWrapper = document.querySelector('#conversation-search-wrapper');
+  const searchBoxWrapper = document.querySelector('#conversation-search-wrapper');
   const conversationElement = document.createElement('a');
   // conversationElement.href = 'javascript:';
   conversationElement.id = `conversation-button-${conversation.id}`;
@@ -292,18 +295,28 @@ function prependConversation(conversation) {
 
   // add checkbox
   addCheckboxToConversationElement(conversationElement, conversation);
-  if (searchboxWrapper) {
-    conversationList.insertBefore(conversationElement, searchboxWrapper.nextSibling);
+  if (searchBoxWrapper) {
+    let lastFolderAtTheTop = searchBoxWrapper;
+    while (lastFolderAtTheTop.nextElementSibling.id.startsWith('wrapper-folder-') && lastFolderAtTheTop.nextElementSibling.id !== 'wrapper-folder-trash') {
+      lastFolderAtTheTop = lastFolderAtTheTop.nextElementSibling;
+    }
+    chrome.storage.local.get(['settings'], (result) => {
+      const { settings } = result;
+      if (settings.keepFoldersAtTheTop) {
+        lastFolderAtTheTop.after(conversationElement);
+      } else {
+        searchBoxWrapper.after(conversationElement);
+      }
+    });
+    // conversationList.insertBefore(conversationElement, searchBoxWrapper.nextSibling);
   } else {
     conversationList.prepend(conversationElement);
   }
-  chrome.storage.sync.get(['conversationsOrder'], (result) => {
+  chrome.storage.local.get(['conversationsOrder'], (result) => {
     const { conversationsOrder } = result;
-    chrome.storage.sync.set({ conversationsOrder: [conversation.id?.slice(0, 5), ...conversationsOrder] });
+    chrome.storage.local.set({ conversationsOrder: [conversation.id, ...conversationsOrder] });
   });
 
-  // after adding first conversation
-  createSearchBox();
   // scroll to the top of the conversation list
   conversationList.scrollTop = 0;
 }
@@ -352,7 +365,7 @@ function loadStorageConversations(conversations, conversationsOrder = [], search
         const folderElement = createFolder(conversation, conversationTimestamp, conversations);
         conversationList.appendChild(folderElement);
       } else {
-        const conv = Object.values(conversations).find((c) => c.id?.slice(0, 5) === conversation);
+        const conv = Object.values(conversations).find((c) => c.id === conversation);
         if (!conv) continue;
         if (conv.skipped) continue;
         const conversationElement = createConversation(conv, conversationTimestamp, searchValue);
@@ -390,6 +403,7 @@ function updateNewChatButtonSynced() {
     const nav = document.querySelector('nav');
     const newChatButton = nav?.querySelector('a');
     newChatButton.classList = 'flex py-3 px-3 w-full items-center gap-3 transition-colors duration-200 text-white cursor-pointer text-sm rounded-md border border-white/20 hover:bg-gray-500/10 mb-1 flex-shrink-0';
+    if (!newChatButton) return;
     // clone newChatButton
     if (conversationsAreSynced) {
       const newChatButtonClone = newChatButton.cloneNode(true);
@@ -434,13 +448,31 @@ function submitChat(userInput, conversation, messageId, parentId, settings, mode
   const startTime = Date.now();
   const interval = setInterval(() => {
     arkoseToken = window.localStorage.getItem('arkoseToken');
-    if (Date.now() - startTime > 30000) {
+
+    if (Date.now() - startTime > 60000) {
       clearInterval(interval);
+      isGenerating = false;
+      chunkNumber = 1;
+      totalChunks = 1;
+      remainingText = '';
+      finalSummary = '';
+      shouldSubmitFinalSummary = false;
+      // remove the last user message
+      const lastMessageWrapper = [...document.querySelectorAll('[id^="message-wrapper-"]')].pop();
+      if (lastMessageWrapper?.dataset?.role !== 'assistant') {
+        lastMessageWrapper.remove();
+      }
+      const syncDiv = document.getElementById('sync-div');
+      syncDiv.style.opacity = '1';
+      const main = document.querySelector('main');
+      const inputForm = main.querySelector('form');
+      const submitButton = inputForm.querySelector('textarea ~ button');
+      // submitButton.disabled = false;
+      submitButton.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" class="h-4 w-4" stroke-width="2"><path d="M.5 1.163A1 1 0 0 1 1.97.28l12.868 6.837a1 1 0 0 1 0 1.766L1.969 15.72A1 1 0 0 1 .5 14.836V10.33a1 1 0 0 1 .816-.983L8.5 8 1.316 6.653A1 1 0 0 1 .5 5.67V1.163Z" fill="currentColor"></path></svg>';
       return;
     }
-    if (arkoseToken || !settings.selectedModel.slug.includes('gpt-4')) {
+    if (arkoseToken || !settings.selectedModel.tags.includes('gpt4') || settings.selectedModel.tags.includes('Unofficial')) {
       clearInterval(interval);
-
       scrolUpDetected = false;
       const curSubmitButton = document.querySelector('main').querySelector('form').querySelector('textarea ~ button');
       curSubmitButton.disabled = true;
@@ -503,7 +535,7 @@ function submitChat(userInput, conversation, messageId, parentId, settings, mode
                   if (!tmpChatStreamIsClosed) { // if not clicked on stop generating button
                     chrome.storage.local.get(['account'], (result) => {
                       const { account } = result;
-                      const isPaid = account?.account_plan?.is_paid_subscription_active || account?.accounts?.default?.entitlement?.has_active_subscription || false;
+                      const isPaid = account?.accounts?.default?.entitlement?.has_active_subscription || false;
                       if (runningPromptChainSteps && runningPromptChainSteps.length > 1 && runningPromptChainIndex < runningPromptChainSteps.length - 1) {
                         setTimeout(() => {
                           insertNextChain(runningPromptChainSteps, runningPromptChainIndex + 1);
@@ -531,6 +563,9 @@ function submitChat(userInput, conversation, messageId, parentId, settings, mode
             initializeStopGeneratingResponseButton();
             initializeRegenerateResponseButton();
             updateTotalCounter();
+            if (settings.chatEndedSound) {
+              playSound('beep');
+            }
             // generateSuggestions(finalConversationId, messageId, settings.selectedModel.slug);
           } else if (e.event === 'ping') {
             // console.error('PING RECEIVED', e);
@@ -627,7 +662,7 @@ function submitChat(userInput, conversation, messageId, parentId, settings, mode
               if (!conversation?.id || userChatSavedLocally) {
                 // save assistant chat locally
                 finalMessage = message;
-                if (!assistantChatSavedLocally && (message.role === 'assistant' || message.author.role === 'assistant') && message.recipient === 'all') {
+                if (!assistantChatSavedLocally && (message.role === 'assistant' || message.author?.role === 'assistant') && message.recipient === 'all') {
                   assistantChatSavedLocally = true;
                   const tempId = setInterval(() => {
                     if (userChatIsActuallySaved) {
@@ -718,6 +753,9 @@ function submitChat(userInput, conversation, messageId, parentId, settings, mode
           const isFirefox = navigator.userAgent.toLowerCase().indexOf('firefox') > -1;
           // if firefox and no error data, do nothing
           if (isFirefox && !err.data) return;
+          if (settings.chatEndedSound) {
+            playSound('beep');
+          }
           isGenerating = false;
           chunkNumber = 1;
           totalChunks = 1;
@@ -844,7 +882,6 @@ function overrideSubmitForm() {
   const inputForm = main.querySelector('form');
   if (!inputForm) return;
   inputForm.addEventListener('submit', (e) => {
-    window.localStorage.removeItem('arkoseToken');
     const textAreaElement = inputForm.querySelector('textarea');
     e.preventDefault();
     e.stopPropagation();
@@ -853,12 +890,6 @@ function overrideSubmitForm() {
     chrome.storage.local.get(['settings', 'conversations', 'models'], ({
       settings, conversations, models,
     }) => {
-      if (settings.selectedModel.slug.includes('gpt-4')) {
-        if (!inputForm.querySelector('#enforcement-trigger')) {
-          addEnforcementTriggerElement();
-        }
-        inputForm.querySelector('#enforcement-trigger').click();
-      }
       const templateWords = textAreaElement.value.match(/{{(.*?)}}/g);
       if (settings.promptTemplate && templateWords?.length > 0) {
         // open template words modal and wait for user to select a word. the when user submit, submit the input form with the replacement
@@ -1025,14 +1056,7 @@ ${settings.autoSplitChunkPrompt}`;
   const submitButtonClone = submitButton.cloneNode(true);
   submitButtonClone.type = 'button';
   submitButtonClone.addEventListener('click', () => {
-    window.localStorage.removeItem('arkoseToken');
     chrome.storage.local.get(['settings'], ({ settings }) => {
-      if (settings.selectedModel.slug.includes('gpt-4')) {
-        if (!inputForm.querySelector('#enforcement-trigger')) {
-          addEnforcementTriggerElement();
-        }
-        inputForm.querySelector('#enforcement-trigger').click();
-      }
       const textAreaElement = inputForm.querySelector('textarea');
       if (isGenerating) return;
       const templateWords = textAreaElement.value.match(/{{(.*?)}}/g);
@@ -1085,59 +1109,57 @@ function setBackButtonDetection() {
 
 // eslint-disable-next-line no-unused-vars
 function loadConversationList(skipInputFormReload = false) {
-  chrome.storage.sync.get(['conversationsOrder'], (res) => {
-    chrome.storage.local.get(['conversations', 'conversationsAreSynced', 'settings'], (result) => {
-      if (result.conversationsAreSynced && typeof result.conversations !== 'undefined') {
-        updateNewChatButtonSynced();
-        if (!skipInputFormReload) initializeNavbar();
-        if (!skipInputFormReload) replaceTextAreaElemet(result.settings);
-        removeOriginalConversationList();
-        createSearchBox();
-        loadStorageConversations(result.conversations, res.conversationsOrder);
-        const { origin, pathname, search } = new URL(window.location.toString());
-        // const isSharedConversation = pathname.startsWith('/share/') && window.location.href.endsWith('/continue');
-        // console.warn('isSharedConversation', isSharedConversation);
-        // if (isSharedConversation) {
-        //   const conversationId = pathname.split('/').pop().pop().replace(/[^a-z0-9-]/gi, '');
-        //   // get content of script element with id=__NEXT_DATA__
-        //   if (/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(conversationId)) {
-        //     const script = document.querySelector('#__NEXT_DATA__');
-        //     const scriptContent = JSON.parse(script.innerHTML);
-        //     const { props } = scriptContent;
-        //     const { pageProps } = props;
-        //     const conversation = pageProps.serverResponse.data;
-        //    console.warn('conversation', conversation);
-        //     loadSharedConversation(conversationId, conversation);
-        //   }
-        // } else {
-        const conversationId = pathname.split('/').pop().replace(/[^a-z0-9-]/gi, '');
-        const conversationList = document.querySelector('#conversation-list');
-        if (/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(conversationId)) {
-          if (!result.conversations[conversationId].archived && !result.conversations[conversationId].skipped) {
-            setTimeout(() => {
-              const focusedConversation = conversationList.querySelector(`#conversation-button-${conversationId}`);
+  chrome.storage.local.get(['conversationsOrder', 'conversations', 'conversationsAreSynced', 'settings'], (result) => {
+    if (result.conversationsAreSynced && typeof result.conversations !== 'undefined') {
+      updateNewChatButtonSynced();
+      if (!skipInputFormReload) initializeNavbar();
+      if (!skipInputFormReload) replaceTextAreaElemet(result.settings);
+      removeOriginalConversationList();
+      createSearchBox();
+      loadStorageConversations(result.conversations, result.conversationsOrder);
+      const { origin, pathname, search } = new URL(window.location.toString());
+      // const isSharedConversation = pathname.startsWith('/share/') && window.location.href.endsWith('/continue');
+      // console.warn('isSharedConversation', isSharedConversation);
+      // if (isSharedConversation) {
+      //   const conversationId = pathname.split('/').pop().pop().replace(/[^a-z0-9-]/gi, '');
+      //   // get content of script element with id=__NEXT_DATA__
+      //   if (/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(conversationId)) {
+      //     const script = document.querySelector('#__NEXT_DATA__');
+      //     const scriptContent = JSON.parse(script.innerHTML);
+      //     const { props } = scriptContent;
+      //     const { pageProps } = props;
+      //     const conversation = pageProps.serverResponse.data;
+      //    console.warn('conversation', conversation);
+      //     loadSharedConversation(conversationId, conversation);
+      //   }
+      // } else {
+      const conversationId = pathname.split('/').pop().replace(/[^a-z0-9-]/gi, '');
+      const conversationList = document.querySelector('#conversation-list');
+      if (/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(conversationId)) {
+        if (!result.conversations[conversationId].archived && !result.conversations[conversationId].skipped) {
+          setTimeout(() => {
+            const focusedConversation = conversationList.querySelector(`#conversation-button-${conversationId}`);
 
-              if (focusedConversation) {
-                focusedConversation.scrollIntoView({ block: 'nearest' });
-              }
-            }, 500);
-            loadConversation(conversationId);
-            if (search) {
-              window.history.replaceState({}, '', `${origin}${pathname}`);
-              handleQueryParams(search);
+            if (focusedConversation) {
+              focusedConversation.scrollIntoView({ block: 'nearest' });
             }
-          } else {
-            showNewChatPage();
+          }, 500);
+          loadConversation(conversationId);
+          if (search) {
+            window.history.replaceState({}, '', `${origin}${pathname}`);
+            handleQueryParams(search);
           }
-        } else { // } if (url === 'https://chat.openai.com/') {
+        } else {
           showNewChatPage();
         }
-        // }
-        if (!skipInputFormReload) addScrollButtons();
-        if (!skipInputFormReload) initializePromptChain();
-        if (!skipInputFormReload) overrideSubmitForm();
-        if (!skipInputFormReload) setBackButtonDetection();
+      } else { // } if (url === 'https://chat.openai.com/') {
+        showNewChatPage();
       }
-    });
+      // }
+      if (!skipInputFormReload) addScrollButtons();
+      if (!skipInputFormReload) initializePromptChain();
+      if (!skipInputFormReload) overrideSubmitForm();
+      if (!skipInputFormReload) setBackButtonDetection();
+    }
   });
 }

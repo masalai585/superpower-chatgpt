@@ -31,7 +31,7 @@ function emptyHistory() {
     const { historyFilter } = settings;
     const searchValue = document.querySelector('input[id="history-search-input"]').value;
     historyListEmpty.innerHTML = historyFilter === 'favorites'
-      ? `No favorite found. ${searchValue ? 'Adjust your search' : `<span style="text-align:center;">You can mark any prompt in your history as favorite. Click on the <span style="text-decoration: underline;">All</span> tab above and then mark any prompt as favorite by clicking on the bookmark icon next to it <img src=${chrome.runtime.getURL('icons/bookmark-off.png')} style="min-width: 24px; height: 32px; transform: rotate(90deg); position: relative; right: -10px; top: 2px;margin:auto;">`}</span>`
+      ? `No favorite found. ${searchValue ? 'Adjust your search' : `<span style="text-align:center;max-width:500px;">You can mark any prompt in your history as favorite. Click on the <span style="text-decoration: underline;">All</span> tab above and then mark any prompt as favorite by clicking on the bookmark icon next to it <img src=${chrome.runtime.getURL('icons/bookmark-off.png')} style="min-width: 24px; height: 32px; transform: rotate(90deg); position: relative; right: -10px; top: 2px;margin:auto;">`}</span>`
       : `No history found. ${searchValue ? 'Adjust your search' : 'Start using the chat to see your prompt history here'}`;
   });
   return historyListEmpty;
@@ -507,7 +507,7 @@ function textAreaElementInputEventListener(event) {
         const { settings } = result;
         const { selectedModel } = settings;
         submitButton.disabled = false;
-        if (selectedModel.slug.startsWith('gpt-4')) {
+        if (selectedModel.tags.includes('gpt4')) {
           submitButton.style.backgroundColor = '#AB68FF';
         } else {
           submitButton.style.backgroundColor = '#19C37D';
@@ -549,7 +549,7 @@ function textAreaElementInputEventListener(event) {
   });
 }
 // Add keyboard event listener to text area
-function textAreaElementKeydownEventListenerASync(event) {
+function textAreaElementKeydownEventListenerAsync(event) {
   const textAreaElement = event.target;
 
   if (event.key === 'Enter' && event.which === 13 && !event.shiftKey && !isGenerating) {
@@ -806,6 +806,6 @@ function addAsyncInputEvents() {
 
   if (textAreaElement) {
     textAreaElement.addEventListener('input', textAreaElementInputEventListener);
-    textAreaElement.addEventListener('keydown', textAreaElementKeydownEventListenerASync);
+    textAreaElement.addEventListener('keydown', textAreaElementKeydownEventListenerAsync);
   }
 }

@@ -1,5 +1,5 @@
 // eslint-disable-next-line no-unused-vars
-/* global createModal, updateEmailNewsletter, createReleaseNoteModal, languageList, writingStyleList, toneList, toast, loadConversationList, modelSwitcher, addModelSwitcherEventListener, API_URL:true */
+/* global createModal, createReleaseNoteModal, languageList, writingStyleList, toneList, toast, loadConversationList, modelSwitcher, addModelSwitcherEventListener, API_URL:true */
 const defaultPrompts = [
   { title: 'Continue', text: 'Please continue', isDefault: true },
   { title: 'Rewrite', text: 'Please rewrite your last response', isDefault: false },
@@ -202,16 +202,12 @@ function generalTabContent() {
         }
         const importedData = JSON.parse(e.target.result);
         const {
-          settings, customModels, customPrompts, conversationsOrder, customInstructionProfiles,
+          settings, customModels, customPrompts, conversationsOrder, customInstructionProfiles, promptChains,
         } = importedData;
         chrome.storage.local.set({
-          settings, customModels, customPrompts, customInstructionProfiles,
+          settings, customModels, customPrompts, customInstructionProfiles, promptChains, conversationsOrder,
         }, () => {
-          chrome.storage.sync.set({
-            conversationsOrder,
-          }, () => {
-            window.location.reload();
-          });
+          window.location.reload();
           toast('Imported Settings Successfully');
         });
       };
@@ -225,27 +221,24 @@ function generalTabContent() {
   exportButton.className = 'w-full px-4 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm bg-gray-800';
   exportButton.textContent = 'Export';
   exportButton.addEventListener('click', () => {
-    chrome.storage.sync.get(['conversationsOrder'], (res) => {
-      chrome.storage.local.get(['settings', 'customModels', 'customPrompts', 'customInstructionProfiles'], (result) => {
-        const {
-          settings, customModels, customPrompts, customInstructionProfiles,
-        } = result;
-        const { conversationsOrder } = res;
-        const data = {
-          settings, customModels, customPrompts, conversationsOrder, customInstructionProfiles,
-        };
-        const element = document.createElement('a');
-        element.setAttribute('href', `data:text/plain;charset=utf-8,${encodeURIComponent(JSON.stringify(data))}`);
-        const todatDate = new Date();
-        const filePostfix = `${todatDate.getFullYear()}-${todatDate.getMonth() + 1}-${todatDate.getDate()}`;
+    chrome.storage.local.get(['conversationsOrder', 'settings', 'customModels', 'customPrompts', 'customInstructionProfiles', 'promptChains'], (result) => {
+      const {
+        settings, customModels, customPrompts, customInstructionProfiles, promptChains, conversationsOrder,
+      } = result;
+      const data = {
+        settings, customModels, customPrompts, conversationsOrder, customInstructionProfiles, promptChains,
+      };
+      const element = document.createElement('a');
+      element.setAttribute('href', `data:text/plain;charset=utf-8,${encodeURIComponent(JSON.stringify(data))}`);
+      const todatDate = new Date();
+      const filePostfix = `${todatDate.getFullYear()}-${todatDate.getMonth() + 1}-${todatDate.getDate()}`;
 
-        element.setAttribute('download', `superpower-chatgpt-settings-${filePostfix}.json`);
-        element.style.display = 'none';
-        document.body.appendChild(element);
-        element.click();
-        document.body.removeChild(element);
-        toast('Settings exported');
-      });
+      element.setAttribute('download', `superpower-chatgpt-settings-${filePostfix}.json`);
+      element.style.display = 'none';
+      document.body.appendChild(element);
+      element.click();
+      document.body.removeChild(element);
+      toast('Settings exported');
     });
   });
   importExportButtonWrapper.appendChild(exportButton);
@@ -466,7 +459,10 @@ function autoSyncTabContent() {
     const showExamplePromptsSwitch = createSwitch('Show Example Prompts', 'Show the example prompts when starting a new chat', 'showExamplePrompts', false, null, 'Requires Auto-Sync', !autoSync);
     content.appendChild(showExamplePromptsSwitch);
 
-    const conversationTimestampSwitch = createSwitch('Conversation Order', 'OFF: Created time, ON: Last updated time', 'conversationTimestamp', false, reloadConversationList, 'Requires Auto-Sync', !autoSync);
+    const keepFoldersAtTheTopSwitch = createSwitch('Keep folders at the top', 'Always show the folders at the top of the history', 'keepFoldersAtTheTop', false, toggleKeepFoldersAtTheTop, 'Requires Auto-Sync', !autoSync);
+    content.appendChild(keepFoldersAtTheTopSwitch);
+
+    const conversationTimestampSwitch = createSwitch('Conversation Order', 'OFF: Created time, ON: Last updated time', 'conversationTimestamp', false, toggleConversationTimestamp, 'Requires Auto-Sync', !autoSync);
     content.appendChild(conversationTimestampSwitch);
 
     const showMessageTimestampSwitch = createSwitch('Message Timestamp', 'Show/hide timestamps on each message', 'showMessageTimestamp', false, reloadConversationList, 'Requires Auto-Sync', !autoSync);
@@ -483,6 +479,9 @@ function autoSyncTabContent() {
 
     const autoResetTopNav = createSwitch('Auto Reset Top Navbar', 'Automatically reset the tone, writing style, and language to default when switching to new chats', 'autoResetTopNav', false, toggleTopNav, 'Requires Auto-Sync', !autoSync);
     content.appendChild(autoResetTopNav);
+
+    const chatEndedSoundSwitch = createSwitch('Sound Alarm', 'Play a sound when the chat ends', 'chatEndedSound', false, null, 'Requires Auto-Sync', !autoSync);
+    content.appendChild(chatEndedSoundSwitch);
   });
   return content;
 }
@@ -502,6 +501,49 @@ function reloadConversationList() {
     } else {
       refreshPage();
     }
+  });
+}
+
+function sortConversationsByTimestamp(conversationsOrder, conversations, byUpdateTime) {
+  const folders = conversationsOrder.filter((c) => typeof c !== 'string' && c.id !== 'trash');
+  // close all folders
+  folders.forEach((f) => {
+    f.isOpen = false;
+  });
+  const conversationIds = conversationsOrder.filter((c) => typeof c === 'string');
+  const trash = conversationsOrder.find((c) => c.id === 'trash');
+  // close trash
+  trash.isOpen = false;
+
+  if (byUpdateTime) {
+    // sort conversationIds by last updated time
+    conversationIds.sort((a, b) => {
+      const aLastUpdated = conversations[a].update_time;
+      const bLastUpdated = conversations[b].update_time;
+      return bLastUpdated - aLastUpdated;
+    });
+  } else {
+    // sort conversations by created time
+    conversationIds.sort((a, b) => {
+      const aCreated = conversations[a].create_time;
+      const bCreated = conversations[b].create_time;
+      return bCreated - aCreated;
+    });
+  }
+  const newConversationsOrder = [...folders, ...conversationIds, trash];
+  return newConversationsOrder;
+}
+function toggleKeepFoldersAtTheTop(isChecked) {
+  chrome.storage.local.get(['settings'], (result) => {
+    const { settings } = result;
+    toggleConversationTimestamp(settings.conversationTimestamp);
+  });
+}
+function toggleConversationTimestamp(isChecked) {
+  chrome.storage.local.get(['conversationsOrder', 'conversations'], (result) => {
+    const { conversationsOrder, conversations } = result;
+    const newConversationsOrder = sortConversationsByTimestamp(conversationsOrder, conversations, isChecked);
+    chrome.storage.local.set({ conversationsOrder: newConversationsOrder }, () => reloadConversationList());
   });
 }
 function toggleGpt4Counter(show) {
@@ -544,7 +586,7 @@ function modelsTabContent() {
     } = result;
     const allModels = [...models, ...unofficialModels, ...customModels];
     const { autoSync } = result.settings;
-    modelSwitcherWrapper.innerHTML = modelSwitcher(allModels, settings.selectedModel, idPrefix, customModels, true);
+    modelSwitcherWrapper.innerHTML = modelSwitcher(allModels, settings.selectedModel, idPrefix, customModels, settings.autoSync, true);
     addModelSwitcherEventListener(idPrefix, true);
     if (autoSync) {
       modelSwitcherWrapper.style.pointerEvents = 'all';
@@ -638,7 +680,7 @@ function modelsTabContent() {
         modelSwitcherWrappers.forEach((wrapper) => {
           const curIdPrefix = wrapper.id.split('model-switcher-wrapper-')[1];
           const newAllModels = [...res.models, ...res.unofficialModels, ...newCustomModels];
-          wrapper.innerHTML = modelSwitcher(newAllModels, res.settings.selectedModel, curIdPrefix, newCustomModels, true);
+          wrapper.innerHTML = modelSwitcher(newAllModels, res.settings.selectedModel, curIdPrefix, newCustomModels, res.settings.autoSync, true);
           addModelSwitcherEventListener(curIdPrefix, true);
         });
         // clear the input fields
@@ -661,6 +703,7 @@ function modelsTabContent() {
 }
 function toggleCustomPromptsButtonVisibility(isChecked) {
   const customPromptsButton = document.querySelector('#continue-conversation-button-wrapper');
+  if (!customPromptsButton) return;
   if (isChecked) {
     customPromptsButton.style.display = 'flex';
   } else {
@@ -915,6 +958,7 @@ function createPromptRow(promptTitle, promptText, isDefault, promptObjectName) {
 }
 function toggleExportButtonVisibility(isChecked) {
   const exportButton = document.querySelector('#export-conversation-button');
+  if (!exportButton) return;
   if (isChecked) {
     exportButton.style.display = 'flex';
   } else {
@@ -1104,8 +1148,6 @@ function newsletterTabContent() {
   const dailyNewsletterSwitch = createSwitch('Hide daily newsletter', 'Automatically hide the daily newsletter popup.', 'hideNewsletter', false);
   content.appendChild(dailyNewsletterSwitch);
 
-  // const sendNewsletterToEmailSwitch = createSwitch('Email newsletter', 'Send the Superpower ChatGPT daily newsletter to my email', 'emailNewsletter', false, updateEmailNewsletter, 'Coming soon');
-
   // content.appendChild(sendNewsletterToEmailSwitch);
   return content;
 }
@@ -1241,24 +1283,7 @@ function settingsModalActions() {
   const logo = document.createElement('img');
   logo.src = chrome.runtime.getURL('icons/logo.png');
   logo.style = 'width: 40px; height: 40px;';
-  logo.addEventListener('click', (event) => {
-    // if shift and cmnd
-    if (event.shiftKey && event.metaKey) {
-      chrome.storage.local.get('environment', ({ environment }) => {
-        if (environment === 'production') {
-          API_URL = 'https://dev.wfh.team:8000';
-          chrome.storage.local.set({ environment: 'development' }, () => {
-            refreshPage();
-          });
-        } else {
-          API_URL = 'https://api.wfh.team';
-          chrome.storage.local.set({ environment: 'production' }, () => {
-            refreshPage();
-          });
-        }
-      });
-    }
-  });
+
   actionBar.appendChild(logo);
   const textWrapper = document.createElement('div');
   textWrapper.style = 'display: flex; flex-direction: column; justify-content: start; align-items: start; margin-left: 8px;';
@@ -1417,6 +1442,7 @@ function initializeSettings() {
         showExportButton: result.settings?.showExportButton !== undefined ? result.settings.showExportButton : true,
         showWordCount: result.settings?.showWordCount !== undefined ? result.settings.showWordCount : true,
         hideNewsletter: result.settings?.hideNewsletter !== undefined ? result.settings.hideNewsletter : false,
+        chatEndedSound: result.settings?.chatEndedSound !== undefined ? result.settings.chatEndedSound : false,
         customInstruction: result.settings?.customInstruction !== undefined ? result.settings.customInstruction : '',
         useCustomInstruction: result.settings?.useCustomInstruction !== undefined ? result.settings.useCustomInstruction : false,
         customConversationWidth: result.settings?.customConversationWidth !== undefined ? result.settings.customConversationWidth : false,
@@ -1438,6 +1464,7 @@ Let's begin:
 `,
         autoSplitChunkPrompt: result.settings?.autoSplitChunkPrompt !== undefined ? result.settings?.autoSplitChunkPrompt : `Reply with OK: [CHUNK x/TOTAL]
 Don't reply with anything else!`,
+        keepFoldersAtTheTop: result.settings?.keepFoldersAtTheTop !== undefined ? result.settings.keepFoldersAtTheTop : false,
         conversationTimestamp: result.settings?.conversationTimestamp !== undefined ? result.settings.conversationTimestamp : true,
         autoHideTopNav: result.settings?.autoHideTopNav !== undefined ? result.settings.autoHideTopNav : false,
         navOpen: result.settings?.navOpen !== undefined ? result.settings.navOpen : true,
